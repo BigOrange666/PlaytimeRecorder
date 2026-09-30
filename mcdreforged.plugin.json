@@ -1,6 +1,6 @@
 {
     "id": "playtime_recorder",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "name": "Playtime Recorder",
     "description": {
         "zh_cn": "记录玩家游玩/AFK 时长，并通过 QQ(NapCat/OneBot v11) 查询与播报，指令 #游玩历史",
@@ -12,5 +12,6 @@
     "link": "https://github.com/BigOrange666",
     "dependencies": {
         "mcdreforged": ">=2.0.0"
-    }
+    },
+    "entrypoint": "entry"
 }

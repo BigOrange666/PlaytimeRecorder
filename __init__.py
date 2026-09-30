@@ -121,26 +121,48 @@ def _find_package_roots(plugin_dir):
     return roots
 
 
-def _load_package_by_path(package_dir):
-    """按文件绝对路径显式装载 qqbridge 包，不依赖 sys.path / import 查找。
+def _parent_package_name():
+    """当前入口模块所属的包名（解压目录形态下就是插件目录名）。
 
-    MCDR 会把插件入口当模块直接 exec，入口目录不保证在 sys.path 里，
-    标准 import 可能找不到同级包。spec_from_file_location 逐个文件装载可以绕开
-    import 查找；因为我们在 sys.modules 里注册了带 __path__ 的真实包对象，
-    包内的相对导入（from .logging_util import ...）依然成立。
+    手工用 spec 加载 __init__.py 时 __package__ 可能为空，这时回退到目录名。
+    CWD 不在 sys.path 里，所以这里的 os.getcwd() 不会误伤。
+    """
+    import sys
+    package = globals().get('__package__')
+    if package:
+        return package
+    module_file = globals().get('__file__')
+    if module_file:
+        directory = os.path.dirname(os.path.abspath(module_file))
+        if directory not in sys.path:
+            return os.path.basename(directory)
+    return None
+
+
+def _load_package_by_path(package_dir, package_name='qqbridge', parent_package=None):
+    """按文件绝对路径显式装载包，不依赖 sys.path / import 查找。
+
+    为什么要这么“土”：MCDR 会把插件入口当模块直接 exec，入口目录不保证在
+    sys.path 里，标准 import 可能找不到同级的包。spec_from_file_location
+    逐个文件装载可以绕开 import 查找；同时我们在 sys.modules 里注册了带
+    __path__ 的真实包对象，包内的相对导入（from .logging_util import ...）依然成立。
+
+    package_name  注册到 sys.modules 的名字（如 'qqbridge'）
+    parent_package 该包的父包名（如 'playtime_recorder'，解压目录形态下用到）
     """
     import importlib.util
     import sys
     import types
 
     package_dir = os.path.abspath(package_dir)
-    package_name = 'qqbridge'
-
     package = types.ModuleType(package_name)
     package.__file__ = os.path.join(package_dir, '__init__.py')
     package.__path__ = [package_dir]
-    package.__package__ = package_name
+    package.__package__ = parent_package or package_name
     sys.modules[package_name] = package
+    if parent_package:
+        # 让 from .qqbridge import ... / import <parent>.qqbridge 也能解析到同一个对象
+        setattr(sys.modules.get(parent_package, package), package_name, package)
 
     def load(module_name):
         full_name = '{}.{}'.format(package_name, module_name)
@@ -165,6 +187,8 @@ def _load_package_by_path(package_dir):
         setattr(package, 'ws_client', ws_mod)
         onebot_mod = load('onebot')
         setattr(package, 'onebot', onebot_mod)
+        recorder_mod = load('recorder')
+        setattr(package, 'recorder', recorder_mod)
     except Exception:
         for name in list(sys.modules):
             if name == package_name or name.startswith(package_name + '.'):
@@ -192,9 +216,11 @@ def _bootstrap_imports():
 
     failures = []
 
+    parent_package = _parent_package_name()
     for root, has_init in roots:
         try:
-            return _load_package_by_path(os.path.join(root, 'qqbridge'))
+            return _load_package_by_path(os.path.join(root, 'qqbridge'),
+                                         parent_package=parent_package)
         except Exception as exc:
             failures.append('  [按路径装载] {} 失败: {}: {}\n{}'.format(
                 root, type(exc).__name__, exc, traceback.format_exc()))
@@ -232,7 +258,7 @@ OneBotClient = _onebot.OneBotClient
 OneBotError = _onebot.OneBotError
 as_int = _onebot.as_int
 
-from .qqbridge.recorder import PlaytimeRecorder  # noqa: E402
+from qqbridge.recorder import PlaytimeRecorder  # noqa: E402
 
 PACKAGE_SOURCE = getattr(record_lib, '__file__', '?')
 

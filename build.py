@@ -10,7 +10,8 @@
 .mcdr 内部结构：
 
     mcdreforged.plugin.json
-    __init__.py            入口（含 MCDR 事件钩子）
+    entry.py               入口（mcdreforged.plugin.json 的 entrypoint 指向它）
+    __init__.py            插件主体（MCDR 事件钩子 + QQNotifier）
     qqbridge/              OneBot v11 客户端、游玩记录核心与解析工具
         __init__.py
         logging_util.py
@@ -33,11 +34,11 @@ DIST_DIR = os.path.join(HERE, 'dist')
 METADATA_PATH = os.path.join(HERE, 'mcdreforged.plugin.json')
 LANG_DIR = os.path.join(HERE, 'lang')
 
-# 运行时需要的文件（相对仓库根），顺序即 zip 内顺序。
-# 注意：MCDR 的 .mcdr 打包格式不允许插件根目录出现除入口外的其它 .py 模块
-# （会报 "Packed plugin cannot contain other module"），
-# 所以除了入口 __init__.py，其余代码都必须待在包目录里。
+# 运行时需要的顶层文件（相对仓库根）。
+# 注意：MCDR 的 .mcdr 打包格式不允许插件根目录出现额外的 .py 模块，
+# 所以除了入口模块 entry.py 之外，所有代码都必须待在 qqbridge/ 包目录里。
 RUNTIME_FILES = [
+    'entry.py',
     '__init__.py',
 ]
 PACKAGE_DIR_NAME = 'qqbridge'
@@ -95,12 +96,17 @@ def collect_lang_entries():
 
 
 def check_top_level_layout():
-    """MCDR 的打包插件格式：顶层只能有入口 __init__.py，其余 .py 必须在包目录里。
+    """MCDR 的打包插件格式：顶层的 .py 只允许「入口模块」和「__init__.py」。
 
-    这里显式拦一道，避免“本地能跑、装进 MCDR 就报
-    Packed plugin cannot contain other module”这种迟到的错误。
+    允许的两个：
+        entry.py       mcdreforged.plugin.json 里 entrypoint 指向它
+        __init__.py    插件主体（带 __init__.py 的目录在 MCDR 眼里是包，不是散落模块）
+
+    除此之外任何顶层 .py 都会被 MCDR 拒绝：
+        Packed plugin cannot contain other module
+    所以其余代码必须待在 qqbridge/ 目录里。
     """
-    allowed = {'__init__.py', 'build.py', 'run_all_tests.py'}
+    allowed = {'entry.py', '__init__.py', 'build.py', 'run_all_tests.py'}
     offenders = []
     for name in sorted(os.listdir(HERE)):
         if not name.endswith('.py') or name in allowed:
@@ -111,7 +117,8 @@ def check_top_level_layout():
 
 def main():
     for required, description in ((METADATA_PATH, '插件元数据'),
-                                  (os.path.join(HERE, '__init__.py'), '插件入口'),
+                                  (os.path.join(HERE, 'entry.py'), '插件入口 entry.py'),
+                                  (os.path.join(HERE, '__init__.py'), '插件主体'),
                                   (os.path.join(HERE, PACKAGE_DIR_NAME), '模块包目录')):
         if not os.path.exists(required):
             print('[!] 找不到{}: {}'.format(description, required))
@@ -120,8 +127,8 @@ def main():
     offenders = check_top_level_layout()
     if offenders:
         print('[!] 插件根目录出现了不该有的 .py 模块: {}'.format(', '.join(offenders)))
-        print('    MCDR 的 .mcdr 格式只允许入口 __init__.py，其余代码请放进 {}/ 目录，'.format(
-            PACKAGE_DIR_NAME))
+        print('    MCDR 的 .mcdr 格式只允许顶层的 entry.py 与 __init__.py，')
+        print('    其余代码请放进 {}/ 目录，'.format(PACKAGE_DIR_NAME))
         print('    否则加载时会报: Packed plugin cannot contain other module')
         return 1
 

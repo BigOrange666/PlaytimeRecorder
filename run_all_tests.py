@@ -48,7 +48,7 @@ def run_script(relative_path, extra_args=None):
 def step_syntax():
     section('1/6  语法检查（编译所有 .py）')
     ok = True
-    for target in ('__init__.py', 'build.py', 'run_all_tests.py',
+    for target in ('entry.py', '__init__.py', 'build.py', 'run_all_tests.py',
                    os.path.join('qqbridge'), os.path.join('tests'),
                    os.path.join('tools')):
         path = os.path.join(HERE, target)
@@ -71,31 +71,40 @@ def step_format_strings():
 
 
 def step_import():
-    section('4/6  导入自检（模拟 MCDR 以包方式加载插件）')
+    section('4/6  导入自检（按 MCDR 的真实方式加载 entry.py）')
     import importlib.util
-    entry = os.path.join(HERE, '__init__.py')
+    entry = os.path.join(HERE, 'entry.py')
     ok = True
     try:
-        spec = importlib.util.spec_from_file_location(
-            'playtime_recorder_selftest', entry,
-            submodule_search_locations=[HERE])
+        spec = importlib.util.spec_from_file_location('_selftest_entry', entry)
         module = importlib.util.module_from_spec(spec)
-        sys.modules['playtime_recorder_selftest'] = module
+        sys.modules['_selftest_entry'] = module
         spec.loader.exec_module(module)
-        print('[PASS] 插件入口导入成功')
+        print('[PASS] entry.py 导入成功')
         for attr in ('on_load', 'on_unload', 'on_player_joined', 'on_player_left',
-                     'on_info', 'PlaytimeRecorder', 'QQNotifier', 'load_config',
-                     'deep_merge', 'record_lib', 'SafeLogger'):
-            if hasattr(module, attr):
-                print('[PASS] 导出 {}'.format(attr))
+                     'on_info', 'entry'):
+            if hasattr(module, attr) and getattr(module, attr) is not None:
+                print('[PASS] entry 暴露 {}'.format(attr))
             else:
                 ok = False
-                print('[FAIL] 缺少导出 {}'.format(attr))
+                print('[FAIL] entry 缺少 {}'.format(attr))
+        plugin = sys.modules.get('playtime_recorder')
+        if plugin is None:
+            ok = False
+            print('[FAIL] 没有注册 playtime_recorder 包')
+        else:
+            for attr in ('PlaytimeRecorder', 'QQNotifier', 'load_config',
+                         'deep_merge', 'record_lib', 'SafeLogger'):
+                if hasattr(plugin, attr):
+                    print('[PASS] 插件导出 {}'.format(attr))
+                else:
+                    ok = False
+                    print('[FAIL] 插件缺少导出 {}'.format(attr))
         global PLUGIN
-        PLUGIN = module
+        PLUGIN = plugin
     except Exception:
         ok = False
-        print('[FAIL] 插件入口导入失败:')
+        print('[FAIL] entry.py 导入失败:')
         traceback.print_exc()
     return ok
 

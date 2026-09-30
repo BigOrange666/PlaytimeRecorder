@@ -40,7 +40,8 @@
 ```
 <MCDR根目录>/plugins/PlaytimeRecorder/
 ├─ mcdreforged.plugin.json
-├─ __init__.py            入口 + MCDR 事件钩子
+├─ entry.py               入口（metadata 的 entrypoint 指向它）
+├─ __init__.py            插件主体 + MCDR 事件钩子
 ├─ qqbridge/              OneBot 客户端、游玩记录核心与解析工具
 │   ├─ __init__.py
 │   ├─ recorder.py        游玩记录核心
@@ -51,9 +52,11 @@
 └─ lang/zh_cn.yml
 ```
 
-> 注意：插件根目录下**只能有入口 `__init__.py`**，其余代码必须在包目录里。
-> MCDR 的 `.mcdr` 打包格式会拒绝根目录下的其它 `.py` 模块
-> （报错 `Packed plugin cannot contain other module`）。
+> 两条来自 MCDR 打包格式的硬约束（踩过坑）：
+> 1. **顶层 `.py` 只能是入口模块**（这里指 `entry.py`），其它代码必须待在包目录里，
+>    否则报 `Packed plugin cannot contain other module`
+> 2. **metadata 必须显式写 `entrypoint`**，否则 MCDR 会拿插件 id（`playtime_recorder`）
+>    当模块名去 import，报 `No module named 'playtime_recorder'`
 
 ## NapCat 侧配置
 
