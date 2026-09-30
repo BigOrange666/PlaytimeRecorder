@@ -1,0 +1,17 @@
+playtime_recorder:
+  help:
+    qq: QQ 机器人桥接管理（状态 / 重载 / 测试消息）
+    playtime: 游玩时长统计（状态 / 保存 / 排行）
+  status:
+    prefix: 'QQ: {state} | NapCat: {url} | 事件 {events} | 回复 {replied} | 重连 {reconnects}'
+  msg:
+    not_ready: 记录器尚未就绪
+    no_target: 没有可用的群号，请先填写 notify.targets 或 access.group_whitelist
+    not_connected: 尚未连接到 NapCat，无法发送测试消息
+    test_sent: '测试消息已发送到: {targets}'
+    test_failed: 测试消息发送失败，请查看控制台日志
+    reloaded: 配置已重载
+    saved: 游玩数据已保存
+    report: 游玩记录状态
+    top: 累计游玩排行
+    no_player: '没有找到玩家: {name}'

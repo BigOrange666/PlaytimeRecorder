@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dev requirements
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Check version matches tag
+        run: |
+          python - <<'PY'
+          import json, os
+          with open('mcdreforged.plugin.json', encoding='utf-8') as f:
+              version = json.load(f)['version']
+          tag = os.environ['GITHUB_REF_NAME']
+          assert tag == 'v' + version, f'tag {tag!r} != v{version}'
+          print('version ok:', version)
+          PY
+
+      - name: Build .mcdr package
+        run: python build.py
+
+      - name: Run offline tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Show artifacts
+        run: ls -l dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/*.mcdr \
+            dist/SHA256SUMS \
+            --verify-tag \
+            --title "Playtime Recorder $RELEASE_TAG" \
+            --notes-file RELEASE_NOTES.md

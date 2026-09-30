@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# 打包产物
+dist/
+build/
+*.mcdr
+
+# 本地运行产物（MCDR 的工作目录内容，不属于插件）
+config/
+logs/
+.pytest_cache/
