@@ -66,6 +66,8 @@ def collect_entries(version):
         entries.append((path, name, None))
 
     package_dir = os.path.join(HERE, PACKAGE_DIR_NAME)
+    if not os.path.isdir(package_dir):
+        return entries
     entries.append((None, '{}/__init__.py'.format(PACKAGE_DIR_NAME),
                     PACKAGE_INIT_TEMPLATE.format(version=version).encode('utf-8')))
     for name in sorted(os.listdir(package_dir)):
@@ -74,12 +76,15 @@ def collect_entries(version):
         path = os.path.join(package_dir, name)
         if os.path.isfile(path):
             entries.append((path, '{}/{}'.format(PACKAGE_DIR_NAME, name), None))
+    return entries
 
+
+def collect_lang_entries():
+    entries = []
     if os.path.isdir(LANG_DIR):
         for name in sorted(os.listdir(LANG_DIR)):
             if name.endswith(('.yml', '.yaml', '.json')):
                 entries.append((os.path.join(LANG_DIR, name), 'lang/' + name, None))
-
     for icon_name in ('icon.png', 'icon.jpg'):
         icon = os.path.join(HERE, icon_name)
         if os.path.isfile(icon):
@@ -99,7 +104,7 @@ def main():
     version = str(metadata.get('version', '0.0.0'))
     plugin_id = str(metadata.get('id', 'plugin'))
 
-    entries = collect_entries(version)
+    entries = collect_entries(version) + collect_lang_entries()
     missing = [path for path, _, content in entries if path is not None and not os.path.isfile(path)]
     if missing:
         print('[!] 缺少文件:')

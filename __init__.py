@@ -240,7 +240,24 @@ PACKAGE_SOURCE = getattr(record_lib, '__file__', '?')
 # ------------------------------------------------------------------ 元数据
 
 PLUGIN_ID = 'playtime_recorder'
-PLUGIN_VERSION = '2.0.0'
+
+
+def _read_metadata_version(default='2.0.0'):
+    """直接从同目录的 mcdreforged.plugin.json 读版本号。
+
+    这样只有一处需要改版本（元数据文件），不会出现"元数据是 2.0.0、
+    代码里写的是 1.0.0、tag 又对不上"的经典事故。
+    """
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'mcdreforged.plugin.json')
+        with open(path, 'r', encoding='utf-8') as handle:
+            return str(json.load(handle).get('version') or default)
+    except (OSError, ValueError):
+        return default
+
+
+PLUGIN_VERSION = _read_metadata_version()
 PLUGIN_METADATA = {
     'id': PLUGIN_ID,
     'version': PLUGIN_VERSION,
