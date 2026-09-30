@@ -232,7 +232,7 @@ OneBotClient = _onebot.OneBotClient
 OneBotError = _onebot.OneBotError
 as_int = _onebot.as_int
 
-from .recorder import PlaytimeRecorder  # noqa: E402
+from .qqbridge.recorder import PlaytimeRecorder  # noqa: E402
 
 PACKAGE_SOURCE = getattr(record_lib, '__file__', '?')
 

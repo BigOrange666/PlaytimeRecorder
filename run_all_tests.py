@@ -48,8 +48,9 @@ def run_script(relative_path, extra_args=None):
 def step_syntax():
     section('1/6  语法检查（编译所有 .py）')
     ok = True
-    for target in ('__init__.py', 'recorder.py', 'build.py',
-                   os.path.join('qqbridge'), os.path.join('tests')):
+    for target in ('__init__.py', 'build.py', 'run_all_tests.py',
+                   os.path.join('qqbridge'), os.path.join('tests'),
+                   os.path.join('tools')):
         path = os.path.join(HERE, target)
         if not os.path.exists(path):
             continue

@@ -15,7 +15,7 @@
 - 依赖：**零第三方库**（WebSocket 客户端是手写的 RFC 6455，只用标准库）
 
 ```
-玩家进出/AFK ──► recorder.py ──► logs/playtime_recorder/playtime.log
+玩家进出/AFK ──► qqbridge/recorder.py ──► logs/playtime_recorder/playtime.log
                      │                        │
                      │                        ▼
                      │             qqbridge/records.py（同一个解析器）
@@ -41,15 +41,19 @@
 <MCDR根目录>/plugins/PlaytimeRecorder/
 ├─ mcdreforged.plugin.json
 ├─ __init__.py            入口 + MCDR 事件钩子
-├─ recorder.py            游玩记录核心
-├─ qqbridge/              OneBot 客户端与解析工具
+├─ qqbridge/              OneBot 客户端、游玩记录核心与解析工具
 │   ├─ __init__.py
-│   ├─ logging_util.py
+│   ├─ recorder.py        游玩记录核心
 │   ├─ records.py
 │   ├─ ws_client.py
-│   └─ onebot.py
+│   ├─ onebot.py
+│   └─ logging_util.py
 └─ lang/zh_cn.yml
 ```
+
+> 注意：插件根目录下**只能有入口 `__init__.py`**，其余代码必须在包目录里。
+> MCDR 的 `.mcdr` 打包格式会拒绝根目录下的其它 `.py` 模块
+> （报错 `Packed plugin cannot contain other module`）。
 
 ## NapCat 侧配置
 

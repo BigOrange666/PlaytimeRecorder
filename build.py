@@ -11,10 +11,10 @@
 
     mcdreforged.plugin.json
     __init__.py            入口（含 MCDR 事件钩子）
-    recorder.py            游玩记录核心
-    qqbridge/              OneBot v11 客户端与解析工具
+    qqbridge/              OneBot v11 客户端、游玩记录核心与解析工具
         __init__.py
         logging_util.py
+        recorder.py        游玩记录核心
         records.py
         ws_client.py
         onebot.py
@@ -33,10 +33,12 @@ DIST_DIR = os.path.join(HERE, 'dist')
 METADATA_PATH = os.path.join(HERE, 'mcdreforged.plugin.json')
 LANG_DIR = os.path.join(HERE, 'lang')
 
-# 运行时需要的文件（相对仓库根），顺序即 zip 内顺序
+# 运行时需要的文件（相对仓库根），顺序即 zip 内顺序。
+# 注意：MCDR 的 .mcdr 打包格式不允许插件根目录出现除入口外的其它 .py 模块
+# （会报 "Packed plugin cannot contain other module"），
+# 所以除了入口 __init__.py，其余代码都必须待在包目录里。
 RUNTIME_FILES = [
     '__init__.py',
-    'recorder.py',
 ]
 PACKAGE_DIR_NAME = 'qqbridge'
 
@@ -92,6 +94,21 @@ def collect_lang_entries():
     return entries
 
 
+def check_top_level_layout():
+    """MCDR 的打包插件格式：顶层只能有入口 __init__.py，其余 .py 必须在包目录里。
+
+    这里显式拦一道，避免“本地能跑、装进 MCDR 就报
+    Packed plugin cannot contain other module”这种迟到的错误。
+    """
+    allowed = {'__init__.py', 'build.py', 'run_all_tests.py'}
+    offenders = []
+    for name in sorted(os.listdir(HERE)):
+        if not name.endswith('.py') or name in allowed:
+            continue
+        offenders.append(name)
+    return offenders
+
+
 def main():
     for required, description in ((METADATA_PATH, '插件元数据'),
                                   (os.path.join(HERE, '__init__.py'), '插件入口'),
@@ -99,6 +116,14 @@ def main():
         if not os.path.exists(required):
             print('[!] 找不到{}: {}'.format(description, required))
             return 1
+
+    offenders = check_top_level_layout()
+    if offenders:
+        print('[!] 插件根目录出现了不该有的 .py 模块: {}'.format(', '.join(offenders)))
+        print('    MCDR 的 .mcdr 格式只允许入口 __init__.py，其余代码请放进 {}/ 目录，'.format(
+            PACKAGE_DIR_NAME))
+        print('    否则加载时会报: Packed plugin cannot contain other module')
+        return 1
 
     metadata = read_metadata()
     version = str(metadata.get('version', '0.0.0'))

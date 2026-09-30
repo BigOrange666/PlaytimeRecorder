@@ -1,6 +1,6 @@
 """游玩记录核心：记录玩家进出、AFK 状态、累计时长，并写出可被解析的日志。
 
-日志格式必须和 qqbridge.records 的解析规则严格对应：
+日志格式必须和 records.py 的解析规则严格对应：
 
     玩家 <名字> 进入服务器 (时间: YYYY-mm-dd HH:MM:SS)
     玩家 <名字> 退出服务器 | 本次游玩: x | AFK: y | 活跃: z | 累计游玩: t | 累计AFK: a
@@ -9,6 +9,10 @@
 
 数据文件：config/playtime_recorder/playtime_data.json
 日志文件：logs/playtime_recorder/playtime.log
+
+放在 qqbridge 包内部的原因：MCDR 的 .mcdr 打包格式不允许插件根目录出现除入口外的
+其它 .py 模块（会报 "Packed plugin cannot contain other module"），
+所以除入口 __init__.py 之外的所有代码都必须待在包目录里。
 """
 
 import json
@@ -18,7 +22,7 @@ import time
 from datetime import datetime
 from threading import RLock
 
-from .qqbridge.records import format_duration
+from .records import format_duration
 
 # Server Utilities / 原版风格的 AFK 提示
 AFK_ON_PATTERN = re.compile(r'^(?P<player>\w+) is now AFK$')
@@ -288,7 +292,7 @@ class PlaytimeRecorder(object):
            搬过来只会把播报回调弄坏。
         2. 累计数据用**合并**而不是覆盖。新实例构造时已经读过数据文件，
            直接覆盖会把新实例已有的数据丢掉（表现为“排行里只剩旧实例的玩家”）。
-           同名时以旧实例为准——它是重载前最新的内存数据。
+           同名时取较大值。
         """
         if old_recorder is None:
             return 0
