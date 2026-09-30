@@ -181,26 +181,56 @@ def timestamp(days_ago, hour, minute):
 
 
 def write_history_log(log_file):
-    """造一段历史日志：3 天前的 Old、昨天的 Steve、今天的 Alex。"""
-    lines = [
-        '{} 玩家 Old 进入服务器 (时间: {})',
-        '{} 玩家 Old 退出服务器 | 本次游玩: 30分钟 | AFK: 0秒 | 活跃: 30分钟 | 累计游玩: 30分钟 | 累计AFK: 0秒',
-        '{} 玩家 Steve 进入服务器 (时间: {})',
-        '{} 玩家 Steve 开始 AFK',
-        '{} 玩家 Steve 结束 AFK，本次 AFK: 15分钟',
-        '{} 玩家 Steve 退出服务器 | 本次游玩: 2小时0分钟0秒 | AFK: 15分钟 | 活跃: 1小时45分钟 | 累计游玩: 3小时 | 累计AFK: 15分钟',
-        '{} 玩家 Alex 进入服务器 (时间: {})',
-        '{} 玩家 Alex 退出服务器 | 本次游玩: 1小时 | AFK: 0秒 | 活跃: 1小时 | 累计游玩: 1小时 | 累计AFK: 0秒',
-    ]
-    stamps = [
-        timestamp(3, 9, 0), timestamp(3, 9, 30),
-        timestamp(1, 0, 30), timestamp(1, 1, 0), timestamp(1, 1, 15), timestamp(1, 2, 30),
-        timestamp(0, 8, 0), timestamp(0, 9, 0),
+    """造一段历史日志：3 天前的 Old、昨天的 Steve、今天的 Alex。
+
+    print_times=True 的行有两个 {}（行首时间 + 括号里的时间），
+    统一按两个参数 format，避免模板和参数个数对不上。
+    """
+    specs = [
+        (3, 9, 0, '玩家 Old 进入服务器 (时间: {})', True),
+        (3, 9, 30, '玩家 Old 退出服务器 | 本次游玩: 30分钟 | AFK: 0秒 | 活跃: 30分钟 | '
+                   '累计游玩: 30分钟 | 累计AFK: 0秒', False),
+        (1, 0, 30, '玩家 Steve 进入服务器 (时间: {})', True),
+        (1, 1, 0, '玩家 Steve 开始 AFK', False),
+        (1, 1, 15, '玩家 Steve 结束 AFK，本次 AFK: 15分钟', False),
+        (1, 2, 30, '玩家 Steve 退出服务器 | 本次游玩: 2小时0分钟0秒 | AFK: 15分钟 | '
+                   '活跃: 1小时45分钟 | 累计游玩: 3小时 | 累计AFK: 15分钟', False),
+        (0, 8, 0, '玩家 Alex 进入服务器 (时间: {})', True),
+        (0, 9, 0, '玩家 Alex 退出服务器 | 本次游玩: 1小时 | AFK: 0秒 | 活跃: 1小时 | '
+                  '累计游玩: 1小时 | 累计AFK: 0秒', False),
     ]
     with open(log_file, 'w', encoding='utf-8') as handle:
-        for template, stamp in zip(lines, stamps):
-            text = stamp.strftime('%Y-%m-%d %H:%M:%S')
-            handle.write('[' + text + '] ' + template.format(text) + '\n')
+        for days_ago, hour, minute, template, with_time in specs:
+            text = timestamp(days_ago, hour, minute).strftime('%Y-%m-%d %H:%M:%S')
+            body = template.format(text) if with_time else template
+            handle.write('[{}] {}\n'.format(text, body))
+
+
+def write_history_totals(data_file, extra_seconds=0.0):
+    """造与 history 日志配套的累计数据。
+
+    报告里「未上线玩家的历史累计」这一段用的是 playtime_data.json，
+    不是日志；所以需要单独造一份，否则 Old（3 天前，已超出默认范围）
+    不会出现在报告里。
+    """
+    payload = {
+        'total_playtime': {
+            'Old': 1800.0,
+            'Two': 3600.0,
+            'Steve': 10800.0,
+            'Alex': 3600.0,
+        },
+        'total_afk': {
+            'Steve': 900.0,
+            'Two': 600.0,
+        },
+    }
+    directory = os.path.dirname(data_file)
+    if directory and not os.path.isdir(directory):
+        os.makedirs(directory, exist_ok=True)
+    with open(data_file, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return payload
 
 
 def main():
@@ -212,11 +242,24 @@ def main():
         mcdr = FakeServer()
         logger = P.SafeLogger(mcdr.logger)
 
-        # ---------- 0. 记录器：写入日志与数据 ----------
+        # ---------- 0. 先建通知器（recorder 的回调要绑在它上面） ----------
+        config = make_config(server.url)
+        notifier = P.QQNotifier(mcdr, config, logger)
+        P.notifier = notifier
+
+        # ---------- 1. 记录器：写入日志与数据 ----------
         data_dir = os.path.join(workdir, 'config', 'playtime_recorder')
         log_dir = os.path.join(workdir, 'logs', 'playtime_recorder')
-        recorder = P.PlaytimeRecorder(mcdr, logger=logger, data_dir=data_dir, log_dir=log_dir)
+        recorder = P.PlaytimeRecorder(
+            mcdr, logger=logger, data_dir=data_dir, log_dir=log_dir,
+            on_session_end=notifier.notify_session_end,
+            on_afk_change=notifier.notify_afk_change)
         P.recorder = recorder
+        # 回归：回调必须在构造时就绑好（之前测试漏传，导致后面所有播报都失效）
+        check('构造时已绑定播报回调',
+              callable(recorder.on_session_end) and callable(recorder.on_afk_change),
+              'on_session_end={!r} on_afk_change={!r}'.format(
+                  recorder.on_session_end, recorder.on_afk_change))
 
         write_history_log(recorder.log_file)
         check('记录器创建了日志文件', os.path.isfile(recorder.log_file))
@@ -229,7 +272,7 @@ def main():
         check('写入的“进入”行能被解析', parsed is not None and parsed.event == P.record_lib.EVENT_JOIN
               and parsed.player == 'TestPlayer', 'got {!r} / {!r}'.format(line, parsed))
 
-        time.sleep(0.1)
+        time.sleep(1.2)     # 让这次会话有非零时长，避免“本次 0秒”掩盖真实问题
         recorder.on_player_left(mcdr, 'TestPlayer')
         line = open(recorder.log_file, 'r', encoding='utf-8').read().strip().split('\n')[-1]
         parsed = P.record_lib.parse_line(line)
@@ -237,21 +280,58 @@ def main():
               and parsed.event == P.record_lib.EVENT_LEAVE
               and parsed.session_seconds is not None,
               'got {!r} / {!r}'.format(line, parsed))
+        check('退出记录有非零时长', parsed is not None and parsed.session_seconds >= 1,
+              'got {}'.format(parsed.session_seconds if parsed else None))
         check('退出后累计数据已保存',
               os.path.isfile(recorder.data_file)
               and 'TestPlayer' in P.record_lib.load_totals(recorder.data_file))
 
-        # 历史日志 8 条 + 刚才真实记录的进入/退出 2 条 = 10 条
+        # 累计数据要和日志配套（报告里“未上线玩家的历史累计”读的是它）
+        write_history_totals(recorder.data_file)
+        totals_now = P.record_lib.load_totals(recorder.data_file)
+        check('累计数据可被读取', totals_now.get('Old') == 1800.0, 'got {}'.format(totals_now))
+
+        # 日志里：历史 8 条 + 刚才真实记录的进入/退出 2 条 = 10 条
         all_records = P.record_lib.read_records(recorder.log_file)
         check('解析历史日志（含真实写入）', len(all_records) == 10,
               'got {}'.format(len(all_records)))
 
-        # ---------- 1. 通知器：连上假 NapCat ----------
-        config = make_config(server.url)
-        notifier = P.QQNotifier(mcdr, config, logger)
-        P.notifier = notifier
+        # ---------- 2. 通知器连上假 NapCat ----------
         notifier.start()
         check('QQ 连接建立', wait_for(lambda: notifier.client.connected))
+
+        # 回归：热重载恢复状态只搬数据，不能覆盖播报回调，也不能丢掉新实例已有的累计数据。
+        notifier.config = P.deep_merge(notifier.config, {
+            'notify': {'on_join': True, 'on_leave': True, 'on_afk': True,
+                       'targets': [123456], 'session_min_seconds': 0}})
+        recorder.restore_from(None)
+        check('restore_from(None) 后回调仍绑定',
+              callable(recorder.on_session_end), 'got {!r}'.format(recorder.on_session_end))
+
+        test_player_seconds = recorder.total_playtime.get('TestPlayer')
+        old_like = P.PlaytimeRecorder(mcdr, logger=logger,
+                                      data_dir=data_dir, log_dir=log_dir)
+        old_like.online_players = {'Carried': {'join_time': time.time(),
+                                               'afk_start_time': None,
+                                               'total_afk_seconds': 0.0}}
+        old_like.total_playtime = {'Carried': 123.0, 'TestPlayer': 1.0}
+        recorder.restore_from(old_like)
+        check('restore_from 恢复旧实例数据',
+              'Carried' in recorder.online_players
+              and recorder.total_playtime.get('Carried') == 123.0,
+              'got {!r}'.format(recorder.snapshot()))
+        check('restore_from 不丢失新实例已有累计',
+              recorder.total_playtime.get('TestPlayer') == test_player_seconds,
+              'got {!r} (期望 {!r})'.format(
+                  recorder.total_playtime.get('TestPlayer'), test_player_seconds))
+        check('restore_from 不覆盖回调',
+              callable(recorder.on_session_end) and callable(recorder.on_afk_change),
+              'on_session_end={!r} on_afk_change={!r}'.format(
+                  recorder.on_session_end, recorder.on_afk_change))
+        # 恢复默认，避免这一节的开关影响后面的断言
+        notifier.config = P.deep_merge(notifier.config, {
+            'notify': {'on_join': False, 'on_leave': False, 'on_afk': False, 'targets': []}})
+        drain(server)
 
         # ---------- 2. 群内 @机器人 + #游玩历史 ----------
         drain(server)
@@ -364,16 +444,89 @@ def main():
 
         # ---------- 10. 主动播报（on_leave） ----------
         drain(server)
+        # 先做一次同步调用，把“配置没生效”和“异步链路没通”分开诊断
         notifier.config = P.deep_merge(notifier.config, {
             'notify': {'on_leave': True, 'targets': [123456], 'session_min_seconds': 0}})
+        check('播报目标群已配置', notifier._targets() == [123456],
+              'got {}'.format(notifier._targets()))
+        notifier.notify_session_end('SyncProbe', {
+            'session_seconds': 60, 'session_text': '1分钟', 'afk_text': '0秒',
+            'active_text': '1分钟', 'total_text': '1分钟'})
+        calls = server.wait_calls('send_group_msg', 1)
+        check('同步调用能播报（链路自检）', len(calls) >= 1,
+              'got {}'.format(server.calls))
+
+        # 再走真实的“玩家退出 -> recorder 回调 -> 播报”链路
+        drain(server)
+        # 用独立 list 记录每一次调用/异常，避免依赖具体变量名或复用别名
+        spy_calls = []
+        spy_errors = []
+        original_callback = recorder.on_session_end
+
+        def spy_callback(player, session):
+            spy_calls.append(player)
+            try:
+                result = original_callback(player, session)
+                spy_errors.append(('ok', None))
+                return result
+            except Exception as exc:
+                spy_errors.append(('error', repr(exc)))
+                raise
+
+        recorder.on_session_end = spy_callback
+        check('安装 spy 前回调仍可调用',
+              callable(original_callback),
+              'got {!r}（说明构造之后有代码把回调清掉了）'.format(original_callback))
+        check('spy 已挂到 recorder 上',
+              recorder.on_session_end is spy_callback and P.recorder is recorder,
+              'recorder.on_session_end is spy={} P.recorder is recorder={}'.format(
+                  recorder.on_session_end is spy_callback, P.recorder is recorder))
         recorder.on_player_joined(mcdr, 'BroadcastGuy')
+        check('离开前在线列表含 BroadcastGuy',
+              'BroadcastGuy' in recorder.online_players,
+              'got {}'.format(sorted(recorder.online_players)))
         time.sleep(0.05)
         recorder.on_player_left(mcdr, 'BroadcastGuy')
+        check('离开后在线列表已移除 BroadcastGuy',
+              'BroadcastGuy' not in recorder.online_players,
+              'got {}'.format(sorted(recorder.online_players)))
         calls = server.wait_calls('send_group_msg', 1)
         text = calls[0].get('message', '') if calls else ''
-        check('玩家退出时主动播报到群', 'BroadcastGuy' in text and '离开了服务器' in text,
-              'got {}'.format(text))
-        notifier.config = P.deep_merge(notifier.config, {'notify': {'on_leave': False}})
+        check('recorder 会话结束回调被触发', spy_calls == ['BroadcastGuy'],
+              'got spy_calls={} spy_errors={} logged_lines={} online={} cb={!r}'.format(
+                  spy_calls, spy_errors, recorder.logged_lines,
+                  sorted(recorder.online_players), recorder.on_session_end))
+        check('会话结束回调没有抛异常', not [item for item in spy_errors if item[0] == 'error'],
+              'got {}'.format(spy_errors))
+        check('玩家退出时主动播报到群（按 notify.targets）',
+              'BroadcastGuy' in text and '离开了服务器' in text,
+              'got {!r} / calls={} / state={}'.format(
+                  text, server.calls, notifier.debug_state()))
+
+        # 如果上面失败，下面的探针能区分“异步提交没执行”还是“发送本身有问题”
+        if not calls:
+            wait_idle(server, idle=1.0)
+            notifier._submit(notifier._broadcast, '[游玩] 探针消息')
+            after_submit = server.wait_calls('send_group_msg', 1)
+            check('直接提交 _broadcast 能发出（异步通道自检）',
+                  len(after_submit) >= 1,
+                  'calls={} state={}'.format(server.calls, notifier.debug_state()))
+
+        # 会话时长低于 session_min_seconds 时不播报
+        drain(server)
+        notifier.config = P.deep_merge(notifier.config,
+                                       {'notify': {'session_min_seconds': 99999}})
+        recorder.on_player_joined(mcdr, 'QuietGuy')
+        time.sleep(0.05)
+        recorder.on_player_left(mcdr, 'QuietGuy')
+        wait_idle(server, idle=0.8)
+        check('未达 session_min_seconds 不播报',
+              len([c for c in server.calls if c[0] == 'send_group_msg']) == 0,
+              'got {}'.format(server.calls))
+        # 恢复默认，避免播报串扰后面的用例
+        notifier.config = P.deep_merge(notifier.config, {
+            'notify': {'on_leave': False, 'session_min_seconds': 0, 'targets': []}})
+        drain(server)
 
         # ---------- 11. 长回复分段 ----------
         drain(server)
@@ -386,6 +539,9 @@ def main():
               'got {}'.format([c.get('message', '')[:20] for c in chunks]))
         notifier.config = P.deep_merge(notifier.config, {'message': {'chunk_size': 1200}})
         notifier.client.message_limit = 1200
+        # 关键：等所有分段都发完，否则尾巴会落到下一节，被当成“本轮回复”
+        # （之前就因此读到上一轮的 '(3/6) ...'）
+        wait_idle(server, idle=1.0)
 
         # ---------- 12. 日志缺失 ----------
         drain(server)

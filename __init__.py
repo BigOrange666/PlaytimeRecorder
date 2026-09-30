@@ -583,11 +583,40 @@ class QQNotifier(object):
         self._submit(self._broadcast, text)
 
     def _broadcast(self, text):
+        """把一条通知发到所有配置的群。返回成功条数，便于诊断。"""
         if not text:
-            return
-        for group_id in self._targets():
-            if self.client.send_group_text(group_id, text):
-                self.stats['notices'] += 1
+            self.logger.debug('播报内容为空，跳过')
+            return 0
+        targets = self._targets()
+        if not targets:
+            self.logger.debug('播报没有配置目标群（notify.targets 为空），跳过')
+            return 0
+        sent = 0
+        for group_id in targets:
+            try:
+                if self.client.send_group_text(group_id, text):
+                    sent += 1
+                    self.stats['notices'] += 1
+                else:
+                    self.logger.warning('播报入队失败（群 {}）', group_id)
+            except Exception as exc:
+                self.logger.warning('播报发送异常（群 {}）: {!r}', group_id, exc)
+        return sent
+
+    def debug_state(self):
+        """给诊断用：把影响播报的关键状态一次性吐出来。"""
+        with self._executor_lock:
+            executor = self.executor
+            shutdown = getattr(executor, '_shutdown', None)
+        return {
+            'targets': self._targets(),
+            'notify_cfg': _cfg(self.config, 'notify', None),
+            'connected': self.client.connected,
+            'enabled': _as_bool(_cfg(self.config, 'enabled', True), True),
+            'executor_shutdown': shutdown,
+            'notices': self.stats['notices'],
+            'last_error': self.stats['last_error'],
+        }
 
     # ----------------------------------------------------------- 消息入口
 

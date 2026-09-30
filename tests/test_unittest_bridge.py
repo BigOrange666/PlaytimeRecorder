@@ -11,17 +11,18 @@ import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGIN_DIR = os.path.dirname(HERE)
 PY = sys.executable or 'python'
 
 
-def run_script(script):
-    """在独立子进程里跑一个测试脚本，返回 (退出码, 合并输出)。"""
+def run_script(script, extra_args=None, cwd=None):
+    """在独立子进程里跑一个脚本，返回 (退出码, 合并输出)。"""
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONUTF8'] = '1'
     completed = subprocess.run(
-        [PY, os.path.join(HERE, script)],
-        cwd=HERE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        [PY, os.path.join(HERE, script)] + list(extra_args or []),
+        cwd=cwd or HERE, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
     return completed.returncode, completed.stdout.decode('utf-8', 'replace')
 
@@ -29,14 +30,25 @@ def run_script(script):
 class OfflineTests(unittest.TestCase):
     maxDiff = None
 
-    def _run_and_check(self, script):
-        code, output = run_script(script)
+    def _run_and_check(self, script, extra_args=None, cwd=None, marker='失败 0 项'):
+        code, output = run_script(script, extra_args=extra_args, cwd=cwd)
         if code != 0:
-            failures = [line for line in output.splitlines() if '[FAIL]' in line]
+            failures = [line for line in output.splitlines() if '[FAIL]' in line or '[问题]' in line]
             detail = '\n'.join(failures) if failures else output[-4000:]
             self.fail('{} 退出码 {}，失败项:\n{}'.format(script, code, detail))
-        self.assertIn('失败 0 项', output,
-                      '{} 的输出里没有“失败 0 项”: \n{}'.format(script, output[-2000:]))
+        self.assertIn(marker, output,
+                      '{} 的输出里没有 {!r}: \n{}'.format(script, marker, output[-2000:]))
+
+    def test_00_format_strings(self):
+        """静态检查：str.format 的占位符与参数是否匹配"""
+        code, output = run_script(
+            os.path.join('..', 'tools', 'check_format_strings.py'),
+            extra_args=[PLUGIN_DIR], cwd=HERE)
+        if code != 0:
+            problems = [line for line in output.splitlines()
+                        if '[问题]' in line or line.strip().startswith('第 ')]
+            self.fail('str.format 占位符检查失败:\n{}'.format('\n'.join(problems) or output))
+        self.assertIn('发现 0 处问题', output, output[-1000:])
 
     def test_01_records(self):
         """数据层：日志解析 / 时间范围 / 统计 / 格式化"""

@@ -111,12 +111,19 @@ class PlaytimeRecorder(object):
             self._warn('写入日志失败: {}', exc)
 
     def _notify(self, callback, player, payload):
+        """调用播报回调。
+
+        兜底是必要的（播报失败绝不能拖垮记录），但要把错误写清楚：
+        最常见的问题是回调没绑上（None），这时候只记 warning 会让人
+        完全找不到“为什么播报不触发”的原因。
+        """
         if callback is None:
+            self._warn('播报回调未绑定，已跳过（检查插件是否正常加载）')
             return
         try:
             callback(player, payload)
         except Exception as exc:
-            self._warn('记录回调异常: {!r}', exc)
+            self._warn('播报回调执行失败（{}）: {!r}', player, exc)
 
     # ---------------------------------------------------------------- 查询
 
@@ -273,16 +280,39 @@ class PlaytimeRecorder(object):
             self._save_data()
 
     def restore_from(self, old_recorder):
-        """热重载时从旧实例恢复在线状态与累计数据。"""
+        """热重载时从旧实例恢复在线状态与累计数据。
+
+        两个要点：
+        1. 只恢复**数据**，绝不碰回调。回调是绑在新建的 QQNotifier 上的；
+           旧实例的回调指向即将被停掉的旧 notifier（首次加载时旧实例根本不存在），
+           搬过来只会把播报回调弄坏。
+        2. 累计数据用**合并**而不是覆盖。新实例构造时已经读过数据文件，
+           直接覆盖会把新实例已有的数据丢掉（表现为“排行里只剩旧实例的玩家”）。
+           同名时以旧实例为准——它是重载前最新的内存数据。
+        """
         if old_recorder is None:
             return 0
         try:
             with self.lock:
                 for player, data in dict(getattr(old_recorder, 'online_players', {})).items():
                     self.online_players[player] = dict(data)
-                self.total_playtime = dict(getattr(old_recorder, 'total_playtime', {}))
-                self.total_afk = dict(getattr(old_recorder, 'total_afk', {}))
-                self.logged_lines = int(getattr(old_recorder, 'logged_lines', 0))
+
+                for source, target in (
+                        (getattr(old_recorder, 'total_playtime', {}), self.total_playtime),
+                        (getattr(old_recorder, 'total_afk', {}), self.total_afk)):
+                    if not isinstance(source, dict):
+                        continue
+                    for player, seconds in source.items():
+                        if player in target:
+                            try:
+                                target[player] = max(float(target[player]), float(seconds))
+                            except (TypeError, ValueError):
+                                target[player] = seconds
+                        else:
+                            target[player] = seconds
+
+                old_lines = int(getattr(old_recorder, 'logged_lines', 0) or 0)
+                self.logged_lines = max(self.logged_lines, old_lines)
         except Exception as exc:
             self._warn('恢复旧实例状态失败: {!r}', exc)
             return 0

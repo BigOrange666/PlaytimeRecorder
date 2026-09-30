@@ -46,7 +46,7 @@ def run_script(relative_path, extra_args=None):
 
 
 def step_syntax():
-    section('1/5  语法检查（编译所有 .py）')
+    section('1/6  语法检查（编译所有 .py）')
     ok = True
     for target in ('__init__.py', 'recorder.py', 'build.py',
                    os.path.join('qqbridge'), os.path.join('tests')):
@@ -63,8 +63,14 @@ def step_syntax():
     return ok
 
 
+def step_format_strings():
+    section('2/6  静态检查：str.format 占位符与参数是否匹配')
+    ok, detail = run_script(os.path.join('tools', 'check_format_strings.py'), [HERE])
+    return ok
+
+
 def step_import():
-    section('2/5  导入自检（模拟 MCDR 以包方式加载插件）')
+    section('4/6  导入自检（模拟 MCDR 以包方式加载插件）')
     import importlib.util
     entry = os.path.join(HERE, '__init__.py')
     ok = True
@@ -94,7 +100,7 @@ def step_import():
 
 
 def step_quick_checks():
-    section('3/5  关键逻辑快检')
+    section('5/6  关键逻辑快检')
     import tempfile
     from datetime import datetime
 
@@ -161,6 +167,26 @@ def step_quick_checks():
                             totals=R.load_totals(recorder.data_file))
     expect('报告含 Alice', '【Alice】' in report, True)
 
+    # 回归：restore_from 只搬数据，不能覆盖播报回调，也不能丢掉新实例已有的累计
+    hits = []
+    recorder2 = plugin.PlaytimeRecorder(
+        None, logger=plugin.SafeLogger(),
+        data_dir=os.path.join(directory, 'config2'),
+        log_dir=os.path.join(directory, 'logs2'),
+        on_session_end=lambda player, session: hits.append(player))
+    old_like = plugin.PlaytimeRecorder(
+        None, logger=plugin.SafeLogger(),
+        data_dir=os.path.join(directory, 'config3'),
+        log_dir=os.path.join(directory, 'logs3'))
+    old_like.total_playtime = {'Carried': 99.0}
+    recorder2.restore_from(old_like)
+    expect('restore_from 恢复旧实例数据', recorder2.total_playtime.get('Carried'), 99.0)
+    expect('restore_from 保留回调', callable(recorder2.on_session_end), True)
+    recorder2.on_player_joined(None, 'Bob')
+    recorder2.on_player_left(None, 'Bob')
+    expect('会话结束会调用回调', hits, ['Bob'])
+    expect('restore_from 不丢新实例新增数据', 'Bob' in recorder2.total_playtime, True)
+
     print('\n----- 报告样例 -----')
     print(report)
     print('---------------------')
@@ -176,22 +202,23 @@ def main():
             sys.path.insert(0, candidate)
     results = []
     results.append(('语法检查', step_syntax()))
+    results.append(('format 静态检查', step_format_strings()))
     results.append(('导入自检', step_import()))
     results.append(('关键逻辑快检', step_quick_checks()))
 
-    section('4/5  数据层测试（tests/test_records.py）')
+    section('数据层测试（tests/test_records.py）')
     ok, detail = run_script(os.path.join('tests', 'test_records.py'))
     results.append(('数据层测试 ' + detail, ok))
 
-    section('5/5  WebSocket / OneBot 测试（tests/test_ws_client.py）')
+    section('WebSocket / OneBot 测试（tests/test_ws_client.py）')
     ok, detail = run_script(os.path.join('tests', 'test_ws_client.py'))
     results.append(('WebSocket 测试 ' + detail, ok))
 
-    section('附加  端到端测试（tests/test_plugin_e2e.py）')
+    section('端到端测试（tests/test_plugin_e2e.py）')
     ok, detail = run_script(os.path.join('tests', 'test_plugin_e2e.py'))
     results.append(('端到端测试 ' + detail, ok))
 
-    section('附加  打包冒烟（build.py）')
+    section('打包冒烟（build.py）')
     ok, detail = run_script('build.py')
     results.append(('打包 ' + detail, ok))
 
