@@ -15,6 +15,9 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable or 'python'
 
+# 插件包名：MCDR 用插件目录名当包名，并要求它等于 metadata 的 id
+PACKAGE_NAME = 'playtime_recorder'
+
 for stream_name in ('stdout', 'stderr'):
     stream = getattr(sys, stream_name, None)
     if stream is not None and hasattr(stream, 'reconfigure'):
@@ -48,9 +51,8 @@ def run_script(relative_path, extra_args=None):
 def step_syntax():
     section('1/6  语法检查（编译所有 .py）')
     ok = True
-    for target in ('entry.py', '__init__.py', 'build.py', 'run_all_tests.py',
-                   os.path.join('qqbridge'), os.path.join('tests'),
-                   os.path.join('tools')):
+    for target in (PACKAGE_NAME, 'build.py', 'run_all_tests.py',
+                   os.path.join('tests'), os.path.join('tools')):
         path = os.path.join(HERE, target)
         if not os.path.exists(path):
             continue
@@ -71,40 +73,38 @@ def step_format_strings():
 
 
 def step_import():
-    section('4/6  导入自检（按 MCDR 的真实方式加载 entry.py）')
+    section('4/6  导入自检（按 MCDR 的 zipimport 方式加载插件包）')
     import importlib.util
-    entry = os.path.join(HERE, 'entry.py')
+    # MCDR 把 .mcdr（zip）本身加进 sys.path，再用 importlib.import_module(entrypoint)
+    # 加载。所以这里既检查包目录存在，也用 playtime_recorder 作包名加载，
+    # 以验证包内相对导入（.qqbridge.xxx）成立。
+    package_dir = os.path.join(HERE, PACKAGE_NAME)
+    entry = os.path.join(package_dir, '__init__.py')
     ok = True
+    if not os.path.isfile(entry):
+        print('[FAIL] 找不到插件包入口: {}'.format(entry))
+        print('       MCDR 用 entrypoint 当模块名 import，归档里必须有这个子目录')
+        return False
     try:
-        spec = importlib.util.spec_from_file_location('_selftest_entry', entry)
+        spec = importlib.util.spec_from_file_location(
+            PACKAGE_NAME, entry, submodule_search_locations=[package_dir])
         module = importlib.util.module_from_spec(spec)
-        sys.modules['_selftest_entry'] = module
+        sys.modules[PACKAGE_NAME] = module
         spec.loader.exec_module(module)
-        print('[PASS] entry.py 导入成功')
+        print('[PASS] 插件包导入成功（包名 {}）'.format(PACKAGE_NAME))
         for attr in ('on_load', 'on_unload', 'on_player_joined', 'on_player_left',
-                     'on_info', 'entry'):
-            if hasattr(module, attr) and getattr(module, attr) is not None:
-                print('[PASS] entry 暴露 {}'.format(attr))
+                     'on_info', 'PlaytimeRecorder', 'QQNotifier', 'load_config',
+                     'deep_merge', 'record_lib', 'SafeLogger'):
+            if hasattr(module, attr):
+                print('[PASS] 导出 {}'.format(attr))
             else:
                 ok = False
-                print('[FAIL] entry 缺少 {}'.format(attr))
-        plugin = sys.modules.get('playtime_recorder')
-        if plugin is None:
-            ok = False
-            print('[FAIL] 没有注册 playtime_recorder 包')
-        else:
-            for attr in ('PlaytimeRecorder', 'QQNotifier', 'load_config',
-                         'deep_merge', 'record_lib', 'SafeLogger'):
-                if hasattr(plugin, attr):
-                    print('[PASS] 插件导出 {}'.format(attr))
-                else:
-                    ok = False
-                    print('[FAIL] 插件缺少导出 {}'.format(attr))
+                print('[FAIL] 缺少导出 {}'.format(attr))
         global PLUGIN
-        PLUGIN = plugin
+        PLUGIN = module
     except Exception:
         ok = False
-        print('[FAIL] entry.py 导入失败:')
+        print('[FAIL] 插件包导入失败:')
         traceback.print_exc()
     return ok
 

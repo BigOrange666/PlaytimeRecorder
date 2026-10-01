@@ -1,12 +1,14 @@
 """Playtime Recorder —— 记录玩家游玩时长，并可通过 QQ（NapCat）查询与播报。
 
-合并了原来两个独立插件的能力：
+这个目录就是 MCDR 插件包本体（插件 id = 目录名 = playtime_recorder）。
+mcdreforged.plugin.json 的 entrypoint 指向本包，MCDR 加载时会把 .mcdr 解压目录
+加进 sys.path，然后 import playtime_recorder —— 所以本目录必须是那个子目录，
+不能把 __init__.py 直接放在解压目录根部。
 
-    记录侧：监听玩家进入/退出/AFK，统计游玩时长与 AFK 时长，
-            写入 logs/playtime_recorder/playtime.log，累计数据存
-            config/playtime_recorder/playtime_data.json
-    通知侧：作为 WebSocket 客户端主动连接 NapCat 的「WebSocket 服务端」，
-            QQ 群里发 #游玩历史 即可查询，玩家进出/上下线可主动播报
+功能：
+    记录侧：监听玩家进入/退出/AFK，统计本次与累计时长，写日志与数据文件
+    通知侧：作为 WebSocket 客户端主动连 NapCat 的「WebSocket 服务端」，
+            QQ 群里发 #游玩历史 查询，玩家进出/结束 AFK 可主动播报
 
 网络方向（关键）：
     Minecraft 侧没有公网 IP，所以由本插件主动连出去，不需要任何入站端口、
@@ -15,11 +17,12 @@
 QQ 指令：
     #游玩历史            昨天 00:00 到现在的记录（默认）
     #游玩历史 今天 / 近7天 / 2025-06-01 / 上限50
+    #游玩统计 [玩家名]   累计排行 / 单玩家累计
     #游玩帮助 / #游玩状态
 
 MCDR 控制台：
-    !!qqbridge / status / reload / test
-    !!playtime  [status|save|top [数量|玩家名]]
+    !!playtime [status|top [玩家名]|save]
+    !!qqbridge [status|reload|test]
 """
 
 import json
@@ -56,7 +59,6 @@ except Exception:  # 允许在没有 MCDR 的环境里导入，便于自测
         def then(self, node):
             return self
 
-
     class _RText(object):
         def __init__(self, text=''):
             self.text = str(text)
@@ -79,8 +81,6 @@ except Exception:  # 允许在没有 MCDR 的环境里导入，便于自测
     def rtr(key, **kwargs):
         return None
 
-
-# --------------------------------------------------------------------- 导入
 
 def _find_package_roots(plugin_dir):
     """找出“包含 qqbridge 包的目录”，返回 [(父目录, 是否同层有 __init__.py)]。"""
@@ -121,48 +121,26 @@ def _find_package_roots(plugin_dir):
     return roots
 
 
-def _parent_package_name():
-    """当前入口模块所属的包名（解压目录形态下就是插件目录名）。
+def _load_package_by_path(package_dir):
+    """按文件绝对路径显式装载 qqbridge 包，不依赖 sys.path / import 查找。
 
-    手工用 spec 加载 __init__.py 时 __package__ 可能为空，这时回退到目录名。
-    CWD 不在 sys.path 里，所以这里的 os.getcwd() 不会误伤。
-    """
-    import sys
-    package = globals().get('__package__')
-    if package:
-        return package
-    module_file = globals().get('__file__')
-    if module_file:
-        directory = os.path.dirname(os.path.abspath(module_file))
-        if directory not in sys.path:
-            return os.path.basename(directory)
-    return None
-
-
-def _load_package_by_path(package_dir, package_name='qqbridge', parent_package=None):
-    """按文件绝对路径显式装载包，不依赖 sys.path / import 查找。
-
-    为什么要这么“土”：MCDR 会把插件入口当模块直接 exec，入口目录不保证在
-    sys.path 里，标准 import 可能找不到同级的包。spec_from_file_location
-    逐个文件装载可以绕开 import 查找；同时我们在 sys.modules 里注册了带
-    __path__ 的真实包对象，包内的相对导入（from .logging_util import ...）依然成立。
-
-    package_name  注册到 sys.modules 的名字（如 'qqbridge'）
-    parent_package 该包的父包名（如 'playtime_recorder'，解压目录形态下用到）
+    MCDR 会把插件入口当模块 exec，入口目录不保证在 sys.path 里，
+    标准 import 可能找不到同级包。spec_from_file_location 逐个文件装载可以绕开
+    import 查找；因为我们在 sys.modules 里注册了带 __path__ 的真实包对象，
+    包内的相对导入（from .logging_util import ...）依然成立。
     """
     import importlib.util
     import sys
     import types
 
     package_dir = os.path.abspath(package_dir)
+    package_name = 'qqbridge'
+
     package = types.ModuleType(package_name)
     package.__file__ = os.path.join(package_dir, '__init__.py')
     package.__path__ = [package_dir]
-    package.__package__ = parent_package or package_name
+    package.__package__ = package_name
     sys.modules[package_name] = package
-    if parent_package:
-        # 让 from .qqbridge import ... / import <parent>.qqbridge 也能解析到同一个对象
-        setattr(sys.modules.get(parent_package, package), package_name, package)
 
     def load(module_name):
         full_name = '{}.{}'.format(package_name, module_name)
@@ -187,8 +165,6 @@ def _load_package_by_path(package_dir, package_name='qqbridge', parent_package=N
         setattr(package, 'ws_client', ws_mod)
         onebot_mod = load('onebot')
         setattr(package, 'onebot', onebot_mod)
-        recorder_mod = load('recorder')
-        setattr(package, 'recorder', recorder_mod)
     except Exception:
         for name in list(sys.modules):
             if name == package_name or name.startswith(package_name + '.'):
@@ -197,30 +173,65 @@ def _load_package_by_path(package_dir, package_name='qqbridge', parent_package=N
     return records_mod, logging_mod.SafeLogger, onebot_mod
 
 
-def _bootstrap_imports():
-    """返回 (records 模块, SafeLogger, onebot 模块)。"""
+def _parent_package_name():
+    """本包所在的那一层包名（MCDR 加载时就是插件 id）。
+
+    MCDR 会把 .mcdr 本身（zip）或插件的“父目录”加进 sys.path，再用
+    metadata.entrypoint 当模块名 import。无论哪种，本模块的 __package__
+    都是那个名字，用它做相对导入最稳。
+    """
+    package = globals().get('__package__')
+    if package:
+        return package
+    return PACKAGE_ID_FALLBACK
+
+
+def _import_from_parent(parent, module_name, attr=None):
+    """import 'qqbridge.<module_name>'，优先走父包相对导入。"""
     import importlib
+
+    errors = []
+    if parent:
+        try:
+            return importlib.import_module('.qqbridge.{}'.format(module_name), package=parent)
+        except Exception as exc:
+            errors.append('相对导入 {}.qqbridge.{} 失败: {}: {}'.format(
+                parent, module_name, type(exc).__name__, exc))
+    try:
+        return importlib.import_module('qqbridge.{}'.format(module_name))
+    except Exception as exc:
+        errors.append('绝对导入 qqbridge.{} 失败: {}: {}'.format(
+            module_name, type(exc).__name__, exc))
+    raise ImportError('; '.join(errors))
+
+
+def _bootstrap_imports():
+    """返回 (records 模块, SafeLogger, onebot 模块)。
+
+    三条路径依次尝试：
+      1. 包相对导入（zipimport 与普通目录都支持，最稳，.mcdr 就走这条）
+      2. 按文件路径显式装载（仅普通目录可用；zip 内的文件 os.path 探测不到）
+      3. 把插件目录加进 sys.path 后绝对导入（老式平铺布局的兜底）
+    """
     import sys
     import traceback
 
-    plugin_dir = os.path.dirname(os.path.abspath(__file__))
-    roots = _find_package_roots(plugin_dir)
-    if not roots:
-        raise ImportError(
-            '在 {} 下没找到 qqbridge 包（需要存在 <该目录>/qqbridge/records.py）。\n'
-            '  正常结构:\n    {}\n    {}\n    {}'.format(
-                plugin_dir,
-                os.path.join(plugin_dir, '__init__.py'),
-                os.path.join(plugin_dir, 'qqbridge', 'records.py'),
-                os.path.join(plugin_dir, 'mcdreforged.plugin.json')))
-
     failures = []
 
-    parent_package = _parent_package_name()
-    for root, has_init in roots:
+    parent = _parent_package_name()
+    try:
+        records_mod = _import_from_parent(parent, 'records')
+        logging_mod = _import_from_parent(parent, 'logging_util')
+        onebot_mod = _import_from_parent(parent, 'onebot')
+        return records_mod, logging_mod.SafeLogger, onebot_mod
+    except Exception as exc:
+        failures.append('  [包相对导入 parent={!r}] {}: {}'.format(
+            parent, type(exc).__name__, exc))
+
+    plugin_dir = os.path.dirname(os.path.abspath(__file__))
+    for root, has_init in _find_package_roots(plugin_dir):
         try:
-            return _load_package_by_path(os.path.join(root, 'qqbridge'),
-                                         parent_package=parent_package)
+            return _load_package_by_path(os.path.join(root, 'qqbridge'))
         except Exception as exc:
             failures.append('  [按路径装载] {} 失败: {}: {}\n{}'.format(
                 root, type(exc).__name__, exc, traceback.format_exc()))
@@ -228,9 +239,10 @@ def _bootstrap_imports():
                 if name == 'qqbridge' or name.startswith('qqbridge.'):
                     sys.modules.pop(name, None)
 
-    for root, has_init in roots:
+    import importlib
+    for root in (plugin_dir, os.path.dirname(plugin_dir)):
         added = []
-        if root not in sys.path:
+        if root and root not in sys.path:
             sys.path.insert(0, root)
             added.append(root)
         try:
@@ -239,8 +251,8 @@ def _bootstrap_imports():
             onebot_mod = importlib.import_module('qqbridge.onebot')
             return records_mod, logging_mod.SafeLogger, onebot_mod
         except Exception as exc:
-            failures.append('  [正常 import] {} 失败: {}: {}\n{}'.format(
-                root, type(exc).__name__, exc, traceback.format_exc()))
+            failures.append('  [sys.path 绝对导入 root={!r}] {}: {}'.format(
+                root, type(exc).__name__, exc))
             for name in list(sys.modules):
                 if name == 'qqbridge' or name.startswith('qqbridge.'):
                     sys.modules.pop(name, None)
@@ -250,37 +262,64 @@ def _bootstrap_imports():
                 except ValueError:
                     pass
 
-    raise ImportError('找到 qqbridge 包但装载失败:\n{}'.format('\n'.join(failures)))
+    raise ImportError(
+        '无法导入 qqbridge 包（插件目录: {}）。\n'
+        '  本模块 __package__ = {!r}\n'
+        '  尝试记录:\n{}'.format(plugin_dir, parent, '\n'.join(failures)))
 
+
+PLUGIN_ID = 'playtime_recorder'
+PACKAGE_ID_FALLBACK = PLUGIN_ID
 
 record_lib, SafeLogger, _onebot = _bootstrap_imports()
 OneBotClient = _onebot.OneBotClient
 OneBotError = _onebot.OneBotError
 as_int = _onebot.as_int
 
-from qqbridge.recorder import PlaytimeRecorder  # noqa: E402
+# 用包相对导入拿记录器：zipimport（.mcdr 是 zip，普通目录也一样）
+PlaytimeRecorder = _import_from_parent(_parent_package_name(), 'recorder').PlaytimeRecorder
 
 PACKAGE_SOURCE = getattr(record_lib, '__file__', '?')
 
 
 # ------------------------------------------------------------------ 元数据
 
-PLUGIN_ID = 'playtime_recorder'
-
-
 def _read_metadata_version(default='2.0.0'):
-    """直接从同目录的 mcdreforged.plugin.json 读版本号。
+    """尽量拿到真实版本号，只保留一处版本定义。
 
-    这样只有一处需要改版本（元数据文件），不会出现"元数据是 2.0.0、
-    代码里写的是 1.0.0、tag 又对不上"的经典事故。
+    三条来源依次尝试：
+      1. MCDR 注入的 metadata（最可靠，.mcdr 与目录安装都有）
+      2. 直接读 mcdreforged.plugin.json（普通目录安装）
+      3. 从 .mcdr 这个 zip 里读（zipimport 场景，os.path 探不到内部路径）
+    全拿不到就用 default —— 这只是显示用的版本号，不影响功能。
     """
-    try:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            'mcdreforged.plugin.json')
-        with open(path, 'r', encoding='utf-8') as handle:
-            return str(json.load(handle).get('version') or default)
-    except (OSError, ValueError):
-        return default
+    injected = globals().get('_plugin_metadata')
+    if isinstance(injected, dict) and injected.get('version'):
+        return str(injected['version'])
+
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(os.path.dirname(package_dir), 'mcdreforged.plugin.json'),
+                 os.path.join(package_dir, 'mcdreforged.plugin.json')):
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as handle:
+                return str(json.load(handle).get('version') or default)
+        except (OSError, ValueError):
+            continue
+
+    # zipimport：本包位于 .mcdr 压缩包内部，从磁盘读不到，改读归档
+    package_file = globals().get('__file__') or ''
+    archive = package_file.split('.mcdr' + os.sep)[0] + '.mcdr'
+    if os.path.isfile(archive):
+        try:
+            import zipfile
+            with zipfile.ZipFile(archive) as zf:
+                return str(json.loads(
+                    zf.read('mcdreforged.plugin.json').decode('utf-8')).get('version') or default)
+        except Exception:
+            pass
+    return default
 
 
 PLUGIN_VERSION = _read_metadata_version()
@@ -608,12 +647,12 @@ class QQNotifier(object):
             player=player, afk=payload.get('afk_text', '?'))
         self._submit(self._broadcast, text)
 
-    def _broadcast(self, text):
+    def _broadcast(self, text, targets=None):
         """把一条通知发到所有配置的群。返回成功条数，便于诊断。"""
         if not text:
             self.logger.debug('播报内容为空，跳过')
             return 0
-        targets = self._targets()
+        targets = targets if targets is not None else self._targets()
         if not targets:
             self.logger.debug('播报没有配置目标群（notify.targets 为空），跳过')
             return 0

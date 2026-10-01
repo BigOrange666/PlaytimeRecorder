@@ -7,19 +7,25 @@
     dist/playtime_recorder-v<版本>.mcdr
     dist/SHA256SUMS
 
-.mcdr 内部结构：
+.mcdr 内部结构（关键：入口是一个以插件 id 命名的**子目录**）：
 
     mcdreforged.plugin.json
-    entry.py               入口（mcdreforged.plugin.json 的 entrypoint 指向它）
-    __init__.py            插件主体（MCDR 事件钩子 + QQNotifier）
-    qqbridge/              OneBot v11 客户端、游玩记录核心与解析工具
-        __init__.py
-        logging_util.py
-        recorder.py        游玩记录核心
-        records.py
-        ws_client.py
-        onebot.py
-    lang/zh_cn.yml         翻译
+    playtime_recorder/
+        __init__.py            插件主体（entrypoint 指向这个包）
+        qqbridge/
+            __init__.py
+            logging_util.py
+            recorder.py
+            records.py
+            ws_client.py
+            onebot.py
+        lang/zh_cn.yml
+
+为什么必须是子目录：MCDR 加载时把解压目录加进 sys.path，然后
+    importlib.import_module(metadata.entrypoint)
+如果 entrypoint 是 'playtime_recorder'，那么 sys.path 里必须能找到名为
+playtime_recorder 的包——也就是解压目录下要有 playtime_recorder/ 子目录。
+把 __init__.py 直接放在解压目录根部是不行的（那样没人是 playtime_recorder 包）。
 """
 
 import hashlib
@@ -29,27 +35,14 @@ import re
 import sys
 import zipfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # 仓库根 = 插件根
+HERE = os.path.dirname(os.path.abspath(__file__))          # 仓库根
 DIST_DIR = os.path.join(HERE, 'dist')
 METADATA_PATH = os.path.join(HERE, 'mcdreforged.plugin.json')
-LANG_DIR = os.path.join(HERE, 'lang')
+LANG_DIR_NAME = 'lang'
 
-# 运行时需要的顶层文件（相对仓库根）。
-# 注意：MCDR 的 .mcdr 打包格式不允许插件根目录出现额外的 .py 模块，
-# 所以除了入口模块 entry.py 之外，所有代码都必须待在 qqbridge/ 包目录里。
-RUNTIME_FILES = [
-    'entry.py',
-    '__init__.py',
-]
-PACKAGE_DIR_NAME = 'qqbridge'
-
-PACKAGE_INIT_TEMPLATE = '''"""qqbridge: OneBot v11 (NapCat) 客户端与游玩记录解析工具包。
-
-纯标准库实现，随 PlaytimeRecorder 插件一起分发。
-"""
-
-__version__ = '{version}'
-'''
+# 插件包目录：以插件 id 命名，等于 metadata 的 entrypoint
+PACKAGE_DIR_NAME = 'playtime_recorder'
+PACKAGE_DIR = os.path.join(HERE, PACKAGE_DIR_NAME)
 
 
 def read_metadata():
@@ -61,83 +54,70 @@ def safe_name(name):
     return re.sub(r'[^0-9A-Za-z._-]+', '_', str(name))
 
 
-def collect_entries(version):
+def collect_entries():
+    """返回 [(磁盘路径 或 None, zip 内路径, 内容 bytes 或 None)]。"""
     entries = [(METADATA_PATH, 'mcdreforged.plugin.json', None)]
 
-    for name in RUNTIME_FILES:
-        path = os.path.join(HERE, name)
-        entries.append((path, name, None))
-
-    package_dir = os.path.join(HERE, PACKAGE_DIR_NAME)
-    if not os.path.isdir(package_dir):
-        return entries
-    entries.append((None, '{}/__init__.py'.format(PACKAGE_DIR_NAME),
-                    PACKAGE_INIT_TEMPLATE.format(version=version).encode('utf-8')))
-    for name in sorted(os.listdir(package_dir)):
-        if not name.endswith('.py'):
-            continue
-        path = os.path.join(package_dir, name)
-        if os.path.isfile(path):
-            entries.append((path, '{}/{}'.format(PACKAGE_DIR_NAME, name), None))
+    for current, dirs, files in os.walk(PACKAGE_DIR):
+        dirs[:] = [d for d in dirs if d != '__pycache__']
+        for name in sorted(files):
+            if name.endswith('.pyc'):
+                continue
+            path = os.path.join(current, name)
+            relative = os.path.relpath(path, HERE).replace(os.sep, '/')
+            entries.append((path, relative, None))
     return entries
 
 
-def collect_lang_entries():
-    entries = []
-    if os.path.isdir(LANG_DIR):
-        for name in sorted(os.listdir(LANG_DIR)):
-            if name.endswith(('.yml', '.yaml', '.json')):
-                entries.append((os.path.join(LANG_DIR, name), 'lang/' + name, None))
-    for icon_name in ('icon.png', 'icon.jpg'):
-        icon = os.path.join(HERE, icon_name)
-        if os.path.isfile(icon):
-            entries.append((icon, icon_name, None))
-    return entries
+def check_metadata(metadata):
+    """校验 MCDR 的元数据规则，本地就拦住，不用等加载插件才报错。"""
+    plugin_id = str(metadata.get('id', 'plugin'))
+    entrypoint = str(metadata.get('entrypoint') or plugin_id)
 
+    if entrypoint != plugin_id and not entrypoint.startswith(plugin_id + '.'):
+        print('[!] entrypoint 不合法: {!r}（插件 id 是 {!r}）'.format(entrypoint, plugin_id))
+        print("    MCDR 要求 entrypoint 等于插件 id，或以 '<id>.' 开头，")
+        print('    否则会报: Invalid entry point ... for plugin id ...')
+        return None
 
-def check_top_level_layout():
-    """MCDR 的打包插件格式：顶层的 .py 只允许「入口模块」和「__init__.py」。
-
-    允许的两个：
-        entry.py       mcdreforged.plugin.json 里 entrypoint 指向它
-        __init__.py    插件主体（带 __init__.py 的目录在 MCDR 眼里是包，不是散落模块）
-
-    除此之外任何顶层 .py 都会被 MCDR 拒绝：
-        Packed plugin cannot contain other module
-    所以其余代码必须待在 qqbridge/ 目录里。
-    """
-    allowed = {'entry.py', '__init__.py', 'build.py', 'run_all_tests.py'}
-    offenders = []
-    for name in sorted(os.listdir(HERE)):
-        if not name.endswith('.py') or name in allowed:
-            continue
-        offenders.append(name)
-    return offenders
+    # entrypoint 的第一段必须对应包目录下的一个子目录或模块
+    top = entrypoint.split('.')[0]
+    package_dir = os.path.join(HERE, top)
+    package_init = os.path.join(package_dir, '__init__.py')
+    package_module = os.path.join(HERE, top + '.py')
+    if not (os.path.isfile(package_init) or os.path.isfile(package_module)):
+        print('[!] entrypoint {!r} 对应的入口不存在。'.format(entrypoint))
+        print('    MCDR 会把解压目录加进 sys.path 再 import 这个名字，所以需要:')
+        print('      {}/__init__.py   （子包形式，推荐）'.format(top))
+        print('    或 {}.py'.format(os.path.join(HERE, top)))
+        return None
+    return entrypoint
 
 
 def main():
     for required, description in ((METADATA_PATH, '插件元数据'),
-                                  (os.path.join(HERE, 'entry.py'), '插件入口 entry.py'),
-                                  (os.path.join(HERE, '__init__.py'), '插件主体'),
-                                  (os.path.join(HERE, PACKAGE_DIR_NAME), '模块包目录')):
+                                  (os.path.join(PACKAGE_DIR, '__init__.py'), '插件包入口'),
+                                  (PACKAGE_DIR, '插件包目录')):
         if not os.path.exists(required):
             print('[!] 找不到{}: {}'.format(description, required))
             return 1
-
-    offenders = check_top_level_layout()
-    if offenders:
-        print('[!] 插件根目录出现了不该有的 .py 模块: {}'.format(', '.join(offenders)))
-        print('    MCDR 的 .mcdr 格式只允许顶层的 entry.py 与 __init__.py，')
-        print('    其余代码请放进 {}/ 目录，'.format(PACKAGE_DIR_NAME))
-        print('    否则加载时会报: Packed plugin cannot contain other module')
-        return 1
 
     metadata = read_metadata()
     version = str(metadata.get('version', '0.0.0'))
     plugin_id = str(metadata.get('id', 'plugin'))
 
-    entries = collect_entries(version) + collect_lang_entries()
-    missing = [path for path, _, content in entries if path is not None and not os.path.isfile(path)]
+    entrypoint = check_metadata(metadata)
+    if entrypoint is None:
+        return 1
+
+    entries = collect_entries()
+    names = [name for _, name, _ in entries]
+    duplicates = sorted(set(name for name in names if names.count(name) > 1))
+    if duplicates:
+        print('[!] 打包清单里有重名文件: {}'.format(', '.join(duplicates)))
+        return 1
+
+    missing = [path for path, _, _ in entries if path is not None and not os.path.isfile(path)]
     if missing:
         print('[!] 缺少文件:')
         for path in missing:
@@ -164,6 +144,7 @@ def main():
     size = os.path.getsize(target)
     print('已生成: {}'.format(target))
     print('大小  : {:.1f} KB'.format(size / 1024.0))
+    print('entrypoint: {}'.format(entrypoint))
     print('SHA256: {}'.format(digest.hexdigest()))
     print('包含 {} 个文件:'.format(len(entries)))
     for path, name, content in entries:

@@ -9,9 +9,9 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLUGIN_DIR = os.path.dirname(HERE)                 # PlaytimeRecorder/
-PKG_PARENT = os.path.join(PLUGIN_DIR, 'qqbridge')  # 含 qqbridge 包的那一层
-for candidate in (PLUGIN_DIR, PKG_PARENT, HERE):
+PLUGIN_DIR = os.path.dirname(HERE)                              # 仓库根
+PKG_DIR = os.path.join(PLUGIN_DIR, 'playtime_recorder')         # 插件包
+for candidate in (PLUGIN_DIR, PKG_DIR, os.path.join(PKG_DIR, 'qqbridge'), HERE):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 

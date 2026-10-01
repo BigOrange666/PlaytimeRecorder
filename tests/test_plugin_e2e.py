@@ -18,12 +18,12 @@ import time
 from datetime import datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)                                  # 插件根目录
-PLUGIN_DIR = ROOT
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-if HERE not in sys.path:
-    sys.path.insert(0, HERE)
+ROOT = os.path.dirname(HERE)                                    # 仓库根
+PLUGIN_PKG = os.path.join(ROOT, 'playtime_recorder')            # 插件包目录
+PLUGIN_ENTRY = os.path.join(PLUGIN_PKG, '__init__.py')
+for candidate in (ROOT, PLUGIN_PKG, os.path.join(PLUGIN_PKG, 'qqbridge'), HERE):
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
 
 from fake_napcat import FakeNapCat  # noqa: E402
 
@@ -33,15 +33,18 @@ ORIGINAL_CWD = os.getcwd()
 
 
 def _load_plugin_module():
-    """把插件根目录作为包加载（等价于 MCDR 加载多文件插件的方式）。"""
-    entry = os.path.join(PLUGIN_DIR, '__init__.py')
-    if not os.path.isfile(entry):
-        raise RuntimeError('找不到插件入口: {}'.format(entry))
+    """把插件包当包加载（等价于 MCDR 加载多文件插件的方式）。
+
+    包名必须与 metadata 的 entrypoint 一致（playtime_recorder），
+    否则包内的相对导入（from .qqbridge.recorder import ...）会解析不到。
+    """
+    if not os.path.isfile(PLUGIN_ENTRY):
+        raise RuntimeError('找不到插件入口: {}'.format(PLUGIN_ENTRY))
     spec = importlib.util.spec_from_file_location(
-        'playtime_recorder_under_test', entry,
-        submodule_search_locations=[PLUGIN_DIR])
+        'playtime_recorder', PLUGIN_ENTRY,
+        submodule_search_locations=[PLUGIN_PKG])
     module = importlib.util.module_from_spec(spec)
-    sys.modules['playtime_recorder_under_test'] = module
+    sys.modules['playtime_recorder'] = module
     spec.loader.exec_module(module)
     return module
 

@@ -10,9 +10,9 @@
 数据文件：config/playtime_recorder/playtime_data.json
 日志文件：logs/playtime_recorder/playtime.log
 
-放在 qqbridge 包内部的原因：MCDR 的 .mcdr 打包格式不允许插件根目录出现除入口外的
-其它 .py 模块（会报 "Packed plugin cannot contain other module"），
-所以除入口 __init__.py 之外的所有代码都必须待在包目录里。
+放在 qqbridge 包内部的原因：MCDR 的打包插件格式要求插件目录下除了入口包之外，
+不能再有散落的顶层模块（会报 Packed plugin cannot contain other module），
+所以除 __init__.py 之外的所有代码都待在 qqbridge/ 子包里。
 """
 
 import json

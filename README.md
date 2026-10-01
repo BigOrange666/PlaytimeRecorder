@@ -30,33 +30,45 @@
 
 ### 方式一：`.mcdr` 单文件（推荐）
 
-从 [Releases](https://github.com/BigOrange666) 下载 `playtime_recorder-v2.0.0.mcdr`，
-丢进 MCDR 的 `plugins/` 目录，重启 MCDR。
+从 [Releases](https://github.com/BigOrange666/PlaytimeRecorder/releases) 下载
+`playtime_recorder-v2.0.2.mcdr`，丢进 MCDR 的 `plugins/` 目录，重启 MCDR。
+
+> MCDR **不会解压** `.mcdr`，而是把归档本身加进 `sys.path`，用 zipimport 按
+> `entrypoint` 加载包。所以包结构必须严格符合下面的约定，`build.py` 会逐条校验。
 
 ### 方式二：源码
 
-把整个仓库作为插件目录放进 `plugins/`（目录名建议 `PlaytimeRecorder`）：
+把仓库目录整个拷进 `plugins/`，**目录名必须是 `playtime_recorder`**（= 插件 id）：
 
 ```
-<MCDR根目录>/plugins/PlaytimeRecorder/
+<MCDR根目录>/plugins/playtime_recorder/     ← 目录名 = 插件 id
 ├─ mcdreforged.plugin.json
-├─ entry.py               入口（metadata 的 entrypoint 指向它）
-├─ __init__.py            插件主体 + MCDR 事件钩子
-├─ qqbridge/              OneBot 客户端、游玩记录核心与解析工具
-│   ├─ __init__.py
-│   ├─ recorder.py        游玩记录核心
-│   ├─ records.py
-│   ├─ ws_client.py
-│   ├─ onebot.py
-│   └─ logging_util.py
-└─ lang/zh_cn.yml
+├─ playtime_recorder/                       ← 插件包（entrypoint 指向它）
+│   ├─ __init__.py                          插件主体 + MCDR 事件钩子
+│   ├─ qqbridge/                            OneBot 客户端、记录核心与解析工具
+│   │   ├─ __init__.py
+│   │   ├─ recorder.py                      游玩记录核心
+│   │   ├─ records.py
+│   │   ├─ ws_client.py
+│   │   ├─ onebot.py
+│   │   └─ logging_util.py
+│   └─ lang/zh_cn.yml
+├─ build.py / run_all_tests.py / tests/ / tools/   仓库自用，运行插件不需要
 ```
 
-> 两条来自 MCDR 打包格式的硬约束（踩过坑）：
-> 1. **顶层 `.py` 只能是入口模块**（这里指 `entry.py`），其它代码必须待在包目录里，
->    否则报 `Packed plugin cannot contain other module`
-> 2. **metadata 必须显式写 `entrypoint`**，否则 MCDR 会拿插件 id（`playtime_recorder`）
->    当模块名去 import，报 `No module named 'playtime_recorder'`
+> ⚠️ 手动拷源码时**目录名和包目录名都不能改**：MCDR 会把插件目录加进 `sys.path`，
+> 再用 `entrypoint`（`playtime_recorder`）当模块名 import。大小写敏感的系统上
+> 目录名不一致会报 `No module named 'playtime_recorder'`。
+> **用 `.mcdr` 安装则完全不涉及目录名**——按 `entrypoint` 从归档里加载包。
+
+> MCDR 打包插件的三条硬约束（都踩过坑，`build.py` 会逐条校验）：
+> 1. **`entrypoint` 必须等于插件 id 或以 `<id>.` 开头**，否则报
+>    `Invalid entry point 'xx' for plugin id 'yy'`
+> 2. **`entrypoint` 对应的包必须是插件归档内的子目录**（`.mcdr` 里要有
+>    `playtime_recorder/__init__.py`），把 `__init__.py` 放归档根部不行，
+>    会报 `No module named 'playtime_recorder'`
+> 3. **包目录里不能有其它散落的顶层 `.py`**，否则报
+>    `Packed plugin cannot contain other module`
 
 ## NapCat 侧配置
 
@@ -210,25 +222,34 @@ python build.py                    # 产物在 dist/*.mcdr
 
 ## 发布
 
+打 tag 即触发 Release（`.github/workflows/release.yml`）：
+
 ```bash
-# 先把 mcdreforged.plugin.json 里 version 改成 2.0.1
-git commit -am "chore: bump version to 2.0.1"
-git tag v2.0.1
-git push origin main --tags
+# 1. 改 mcdreforged.plugin.json 里的 version，例如 2.0.3
+# 2. 同步更新 RELEASE_NOTES.md
+git commit -am "chore: release 2.0.3"
+git push
+
+# 3. 打 tag（必须 = v + 元数据版本）并推送
+git tag v2.0.3
+git push origin v2.0.3
 ```
 
-workflow 会校验 tag 与元数据版本一致 → 打包 → 跑测试 → 创建 Release 并附上 `.mcdr` 与 `SHA256SUMS`。
+workflow 会：校验 tag 与元数据版本一致 → `python build.py` → `python -m unittest discover -s tests -v`
+→ 创建 Release 并附上 `.mcdr` 与 `SHA256SUMS`。
 
 ## 设计说明
 
-- **记录与查询同源**：日志的写入方（`recorder.py`）和解析方（`qqbridge/records.py`）
-  在同一个插件里，格式约定集中在一处；端到端测试会真写一条记录再读回来验证，防止两边漂移。
+- **记录与查询同源**：日志的写入方（`qqbridge/recorder.py`）和解析方
+  （`qqbridge/records.py`）在同一个插件里，格式约定集中在一处；端到端测试会真写一条
+  记录再读回来验证，防止两边漂移。
 - **零第三方依赖**：MCDR 的嵌入式 Python 通常没装 `websockets` / `websocket-client`，
   所以 `qqbridge/ws_client.py` 用标准库手写了 RFC 6455 客户端（掩码、126/127 扩展长度、
   分片重组、ping/pong、关闭握手）。
-- **导入不依赖 sys.path**：MCDR 把插件入口当模块直接 exec，入口目录不保证在 `sys.path` 里。
-  入口会先扫描目录定位 `qqbridge` 包，再按文件绝对路径逐个显式装载
-  （见 `__init__.py` 的 `_bootstrap_imports`）。`.mcdr` 安装、解压、git clone 三种方式都能导入。
+- **导入用包相对导入**：MCDR 把 `.mcdr`（zip）加进 `sys.path` 后用 zipimport 按
+  `entrypoint` 加载包，所以入口里用 `importlib.import_module('.qqbridge.records', package=__package__)`
+  最稳；`os.path` 探测在 zip 内部会全部失效。引导器保留了"按路径显式装载"和
+  "`sys.path` 绝对导入"两级兜底，用于非 MCDR 环境（见 `__init__.py` 的 `_bootstrap_imports`）。
 - **不阻塞主线程**：查询与发送在工作线程池里执行；所有 QQ 发送先入队，由独立线程串行发出；
   长回复按 `chunk_size` 自动分段并带 `(1/2)` 序号。
 - **断线自愈**：指数退避重连（3s → 60s），NapCat 重启或网络抖动不用手工干预。
