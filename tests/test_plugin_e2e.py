@@ -178,33 +178,30 @@ def make_config(server_url, **overrides):
     return config
 
 
-def timestamp(days_ago, hour, minute):
-    day = (datetime.now() - timedelta(days=days_ago)).date()
-    return datetime(day.year, day.month, day.day, hour, minute, 0)
-
-
 def write_history_log(log_file):
     """造一段历史日志：3 天前的 Old、昨天的 Steve、今天的 Alex。
 
+    使用相对当前时间的时间，避免时区差异导致 CI 上查不到记录。
     print_times=True 的行有两个 {}（行首时间 + 括号里的时间），
     统一按两个参数 format，避免模板和参数个数对不上。
     """
+    now = datetime.now()
     specs = [
-        (3, 9, 0, '玩家 Old 进入服务器 (时间: {})', True),
-        (3, 9, 30, '玩家 Old 退出服务器 | 本次游玩: 30分钟 | AFK: 0秒 | 活跃: 30分钟 | '
+        (3 * 24 * 60 + 9 * 60, '玩家 Old 进入服务器 (时间: {})', True),
+        (3 * 24 * 60 + 9 * 60 + 30, '玩家 Old 退出服务器 | 本次游玩: 30分钟 | AFK: 0秒 | 活跃: 30分钟 | '
                    '累计游玩: 30分钟 | 累计AFK: 0秒', False),
-        (1, 0, 30, '玩家 Steve 进入服务器 (时间: {})', True),
-        (1, 1, 0, '玩家 Steve 开始 AFK', False),
-        (1, 1, 15, '玩家 Steve 结束 AFK，本次 AFK: 15分钟', False),
-        (1, 2, 30, '玩家 Steve 退出服务器 | 本次游玩: 2小时0分钟0秒 | AFK: 15分钟 | '
+        (24 * 60 + 0 * 60 + 30, '玩家 Steve 进入服务器 (时间: {})', True),
+        (24 * 60 + 1 * 60 + 0, '玩家 Steve 开始 AFK', False),
+        (24 * 60 + 1 * 60 + 15, '玩家 Steve 结束 AFK，本次 AFK: 15分钟', False),
+        (24 * 60 + 2 * 60 + 30, '玩家 Steve 退出服务器 | 本次游玩: 2小时0分钟0秒 | AFK: 15分钟 | '
                    '活跃: 1小时45分钟 | 累计游玩: 3小时 | 累计AFK: 15分钟', False),
-        (0, 8, 0, '玩家 Alex 进入服务器 (时间: {})', True),
-        (0, 9, 0, '玩家 Alex 退出服务器 | 本次游玩: 1小时 | AFK: 0秒 | 活跃: 1小时 | '
-                  '累计游玩: 1小时 | 累计AFK: 0秒', False),
+        (60, '玩家 Alex 进入服务器 (时间: {})', True),
+        (30, '玩家 Alex 退出服务器 | 本次游玩: 1小时 | AFK: 0秒 | 活跃: 1小时 | '
+                   '累计游玩: 1小时 | 累计AFK: 0秒', False),
     ]
     with open(log_file, 'w', encoding='utf-8') as handle:
-        for days_ago, hour, minute, template, with_time in specs:
-            text = timestamp(days_ago, hour, minute).strftime('%Y-%m-%d %H:%M:%S')
+        for minutes_ago, template, with_time in specs:
+            text = (now - timedelta(minutes=minutes_ago)).strftime('%Y-%m-%d %H:%M:%S')
             body = template.format(text) if with_time else template
             handle.write('[{}] {}\n'.format(text, body))
 
